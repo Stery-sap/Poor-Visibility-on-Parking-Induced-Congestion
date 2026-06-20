@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ParkWatch AI — Bengaluru Traffic Intelligence</title>
+
+<!-- Leaflet for map -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+/* ── Reset ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+
+/* ── Design tokens ──────────────────────────────────── */
+:root {
+  --ink:        #0D1117;
+  --ink-2:      #3B4350;
+  --ink-3:      #6B7685;
+  --paper:      #F5F6F8;
+  --surface:    #FFFFFF;
+  --border:     #E2E5EA;
+
+  --signal:     #FF3D3D;   /* critical red  */
+  --warn:       #FF8C00;   /* high orange   */
+  --caution:    #F5C400;   /* medium amber  */
+  --safe:       #1DB87A;   /* low green     */
+  --brand:      #1A56FF;   /* accent blue   */
+  --brand-dim:  #E8EEFF;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+
+  --mono: 'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  font-family: var(--sans);
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Top nav ────────────────────────────────────────── */
+.topnav {
+  background: var(--ink);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  flex-shrink: 0;
+  border-bottom: 2px solid var(--signal);
+}
+.topnav-logo {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 15px; letter-spacing: -0.3px;
+}
+.topnav-logo svg { color: var(--signal); }
+.topnav-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--signal);
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.topnav-right {
+  display: flex; align-items: center; gap: 16px;
+  font-size: 12px; color: rgba(255,255,255,0.55);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--safe);
+  display: inline-block;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── Layout ─────────────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 260px 1fr 300px;
+  grid-template-rows: 1fr;
+  flex: 1;
+  overflow: hidden;
+  height: calc(100vh - 52px);
+}
+
+/* ── Sidebar ────────────────────────────────────────── */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.sidebar-section {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 10px;
+}
+
+/* KPI tiles */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.kpi {
+  background: var(--paper);
+  border-radius: var(--r-sm);
+  padding: 10px;
+  border: 1px solid var(--border);
+}
+.kpi-val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.kpi-key { font-size: 10px; color: var(--ink-3); }
+
+/* Risk legend */
+.legend-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--border);
+  justify-content: space-between;
+}
+.legend-row:last-child { border-bottom: none; }
+.legend-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.legend-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* Junction list */
+.junction-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.junction-item:last-child { border-bottom: none; }
+.junction-item:hover { background: var(--brand-dim); border-radius: var(--r-sm); padding-left: 6px; }
+.junction-rank {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  min-width: 18px;
+  padding-top: 1px;
+}
+.junction-name { font-size: 11px; line-height: 1.4; color: var(--ink-2); }
+.junction-bar-wrap { margin-top: 3px; height: 3px; background: var(--border); border-radius: 2px; }
+.junction-bar { height: 3px; background: var(--brand); border-radius: 2px; }
+
+/* ── Map center ─────────────────────────────────────── */
+.map-col {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.map-toolbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.map-toolbar-title { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-right: auto; }
+.chip {
+  font-size: 11px; padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--paper);
+  color: var(--ink-2);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.chip.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.chip:hover:not(.active) { border-color: var(--brand); color: var(--brand); }
+
+#map { flex: 1; }
+
+/* ── Right panel ────────────────────────────────────── */
+.right-panel {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Predict form */
+.predict-form { padding: 16px; border-bottom: 1px solid var(--border); }
+.form-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--ink); }
+.field { margin-bottom: 10px; }
+.field label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 4px;
+}
+.field select, .field input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  color: var(--ink);
+  appearance: none;
+  outline: none;
+  font-family: var(--sans);
+  transition: border-color 0.15s;
+}
+.field select:focus, .field input:focus { border-color: var(--brand); }
+
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.predict-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--ink);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 4px;
+  transition: background 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.predict-btn:hover { background: var(--brand); }
+
+/* Result card */
+.result-card {
+  margin: 14px 16px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  display: none;
+}
+.result-header {
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.result-risk {
+  font-size: 18px; font-weight: 800;
+  letter-spacing: -0.5px;
+}
+.result-prob {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-top: 1px;
+}
+.result-badge {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.result-factors {
+  padding: 10px 14px 12px;
+  background: var(--paper);
+  border-top: 1px solid var(--border);
+}
+.factors-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.factor-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  margin: 2px;
+  color: var(--ink-2);
+}
+
+/* Model metrics */
+.metrics-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.metric-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-name { font-size: 11px; color: var(--ink-2); width: 100px; flex-shrink: 0; }
+.metric-bar-wrap { flex: 1; height: 8px; background: var(--paper); border-radius: 4px; overflow: hidden; }
+.metric-bar { height: 100%; border-radius: 4px; }
+.metric-val-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  width: 38px;
+  text-align: right;
+}
+.best-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: var(--brand-dim);
+  color: var(--brand);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ── Hourly chart ───────────────────────────────────── */
+.chart-section { padding: 16px; }
+canvas { max-height: 140px; }
+
+/* ── Scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* ── Leaflet overrides ──────────────────────────────── */
+.leaflet-popup-content-wrapper {
+  border-radius: var(--r-md) !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important;
+}
+.leaflet-popup-content { margin: 0 !important; width: auto !important; }
+.leaflet-popup-tip { display: none; }
+.popup-inner { padding: 12px 14px; min-width: 180px; }
+.popup-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.popup-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-2); padding: 2px 0; }
+.popup-prob {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ── Top Nav ─────────────────────────────────────── -->
+<nav class="topnav">
+  <div class="topnav-logo">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+    </svg>
+    ParkWatch AI
+    <span class="topnav-badge">BENGALURU</span>
+  </div>
+  <div class="topnav-right">
+    <span><span class="live-dot"></span>&nbsp; LightGBM · F1 1.000</span>
+    <span>298,450 violations analysed</span>
+    <span>Jan – May 2024</span>
+    <span id="api-status" style="font-family:var(--mono);font-size:11px;color:#6B7685">● Connecting…</span>
+  </div>
+</nav>
+
+<!-- ── App layout ──────────────────────────────────── -->
+<div class="app">
+
+  <!-- ── Left sidebar ─────────────────────────────── -->
+  <aside class="sidebar">
+
+    <!-- KPIs -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Overview</div>
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-val" style="color:var(--signal)">298K</div>
+          <div class="kpi-key">Total violations</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-val" style="color:var(--warn)">81.4%</div>
+          <div class="kpi-key">High impact</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-val" style="color:var(--brand)">315</div>
+          <div class="kpi-key">Density threshold</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-val" style="color:var(--safe)">50</div>
+          <div class="kpi-key">Hotspot zones</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Risk legend -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Risk levels</div>
+      <div class="legend-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="legend-dot" style="background:var(--signal)"></div>
+          <span style="font-size:12px">CRITICAL  ≥ 85%</span>
+        </div>
+        <span class="legend-count">62%</span>
+      </div>
+      <div class="legend-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="legend-dot" style="background:var(--warn)"></div>
+          <span style="font-size:12px">HIGH  65–84%</span>
+        </div>
+        <span class="legend-count">12%</span>
+      </div>
+      <div class="legend-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="legend-dot" style="background:var(--caution)"></div>
+          <span style="font-size:12px">MEDIUM  40–64%</span>
+        </div>
+        <span class="legend-count">8%</span>
+      </div>
+      <div class="legend-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="legend-dot" style="background:var(--safe)"></div>
+          <span style="font-size:12px">LOW  &lt; 40%</span>
+        </div>
+        <span class="legend-count">18%</span>
+      </div>
+    </div>
+
+    <!-- Top junctions -->
+    <div class="sidebar-section" style="flex:1">
+      <div class="sidebar-label">Top enforcement zones</div>
+      <div id="junction-list"></div>
+    </div>
+
+  </aside>
+
+  <!-- ── Map ──────────────────────────────────────── -->
+  <div class="map-col">
+    <div class="map-toolbar">
+      <span class="map-toolbar-title">Congestion Hotspot Map</span>
+      <button class="chip active" onclick="filterMap('all',this)">All zones</button>
+      <button class="chip" onclick="filterMap('CRITICAL',this)">Critical</button>
+      <button class="chip" onclick="filterMap('HIGH',this)">High</button>
+      <button class="chip" onclick="filterMap('MEDIUM',this)">Medium</button>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <!-- ── Right panel ───────────────────────────────── -->
+  <div class="right-panel">
+
+    <!-- Predict form -->
+    <div class="predict-form">
+      <div class="form-title">🔍 Predict Congestion Impact</div>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Latitude</label>
+          <input type="number" id="f-lat" value="12.9716" step="0.0001"/>
+        </div>
+        <div class="field">
+          <label>Longitude</label>
+          <input type="number" id="f-lon" value="77.5946" step="0.0001"/>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Date &amp; Time</label>
+        <input type="datetime-local" id="f-dt" value="2024-03-15T08:30"/>
+      </div>
+
+      <div class="field">
+        <label>Violation type</label>
+        <select id="f-vtype">
+          <option value="PARKING IN A MAIN ROAD">Parking in a Main Road</option>
+          <option value="WRONG PARKING">Wrong Parking</option>
+          <option value="DOUBLE PARKING">Double Parking</option>
+          <option value="PARKING ON FOOTPATH">Parking on Footpath</option>
+          <option value="PARKING NEAR BUSTOP">Parking near Bus Stop</option>
+          <option value="PARKING IN A MAIN ROAD,DOUBLE PARKING">Main Road + Double Parking</option>
+          <option value="NO PARKING">No Parking Zone</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Vehicle type</label>
+        <select id="f-vehicle">
+          <option>CAR</option>
+          <option>MOTOR CYCLE</option>
+          <option>LGV</option>
+          <option>HGV</option>
+          <option>PRIVATE BUS</option>
+          <option>BUS (BMTC/KSRTC)</option>
+          <option>AUTO</option>
+          <option>VAN</option>
+          <option>LORRY/GOODS VEHICLE</option>
+          <option>SCOOTER</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Police station</label>
+        <select id="f-station">
+          <option>Shivajinagar</option>
+          <option>Upparpet</option>
+          <option>Rajajinagar</option>
+          <option>Malleshwaram</option>
+          <option>Basavanagudi</option>
+          <option>Jayanagara</option>
+          <option>HSR Layout</option>
+          <option>Whitefield</option>
+          <option>Madiwala</option>
+          <option>City Market</option>
+          <option>Chamarajpet</option>
+          <option>Halasur</option>
+          <option>Yeshwanthpura</option>
+          <option>Vijayanagara</option>
+          <option>Electronic City</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Grid density (violations/cell)</label>
+        <input type="number" id="f-density" value="420" min="0" max="25000"/>
+      </div>
+
+      <button class="predict-btn" onclick="runPredict()">
+        <span id="btn-text">Run prediction</span>
+        <div class="spinner" id="btn-spinner"></div>
+      </button>
+    </div>
+
+    <!-- Result -->
+    <div class="result-card" id="result-card">
+      <div class="result-header" id="result-header">
+        <div>
+          <div class="result-risk" id="result-risk-label">—</div>
+          <div class="result-prob" id="result-prob-label">—</div>
+        </div>
+        <div class="result-badge" id="result-badge">—</div>
+      </div>
+      <div class="result-factors">
+        <div class="factors-title">Risk factors detected</div>
+        <div id="result-factors-list"></div>
+      </div>
+    </div>
+
+    <!-- Model metrics -->
+    <div class="metrics-section">
+      <div class="sidebar-label">Model comparison — F1 score</div>
+      <div id="metrics-list"></div>
+    </div>
+
+    <!-- Hourly chart -->
+    <div class="chart-section">
+      <div class="sidebar-label" style="margin-bottom:10px">Violations by hour</div>
+      <canvas id="hourly-chart"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────
+// DATA
+// ──────────────────────────────────────────────────
+const METADATA = {
+  density_threshold: 315.25,
+  top_junctions: [
+    "BTP051 - Safina Plaza Junction",
+    "BTP082 - KR Market Junction",
+    "BTP040 - Elite Junction",
+    "BTP044 - Sagar Theatre Junction",
+    "BTP211 - Central Street Junction",
+    "BTP058 - Subbanna Junction",
+    "BTP027 - Modi Bridge Junction",
+    "BTP020 - Hosahalli Metro Station",
+    "BTP057 - Anand Rao Junction",
+    "BTP080 - NR Road, SP Road Junction",
+  ],
+  junction_counts: [15449, 11538, 10718, 10549, 5388, 5189, 4584, 4101, 3820, 3650],
+  model_metrics: {
+    "LightGBM":          { f1: 1.0000, auc: 1.0000, color: "#1DB87A" },
+    "XGBoost":           { f1: 0.9999, auc: 1.0000, color: "#1A56FF" },
+    "Random Forest":     { f1: 0.9996, auc: 1.0000, color: "#7F77DD" },
+    "Logistic Reg.":     { f1: 0.9393, auc: 0.9666, color: "#6B7685" },
+  }
+};
+
+const HOTSPOTS = [
+  { lat: 12.99, lon: 77.75, density: 102,   prob: 0.9999, count: 1  },
+  { lat: 12.98, lon: 77.71, density: 246,   prob: 0.9999, count: 1  },
+  { lat: 12.87, lon: 77.67, density: 8,     prob: 0.9999, count: 1  },
+  { lat: 12.93, lon: 77.50, density: 14,    prob: 0.9999, count: 1  },
+  { lat: 12.97, lon: 77.59, density: 23880, prob: 0.9999, count: 842 },
+  { lat: 12.96, lon: 77.58, density: 16300, prob: 0.9999, count: 612 },
+  { lat: 12.98, lon: 77.57, density: 14200, prob: 0.9999, count: 530 },
+  { lat: 12.96, lon: 77.60, density: 12800, prob: 0.9999, count: 490 },
+  { lat: 12.94, lon: 77.56, density: 10200, prob: 0.9999, count: 380 },
+  { lat: 12.99, lon: 77.60, density: 9400,  prob: 0.9999, count: 340 },
+  { lat: 12.95, lon: 77.62, density: 8100,  prob: 0.9999, count: 290 },
+  { lat: 12.93, lon: 77.58, density: 7600,  prob: 0.9999, count: 260 },
+  { lat: 12.97, lon: 77.55, density: 6900,  prob: 0.9999, count: 220 },
+  { lat: 13.00, lon: 77.58, density: 5800,  prob: 0.9999, count: 190 },
+  { lat: 12.92, lon: 77.60, density: 4200,  prob: 0.9999, count: 160 },
+  { lat: 12.91, lon: 77.57, density: 3600,  prob: 0.9999, count: 130 },
+  { lat: 12.89, lon: 77.63, density: 2900,  prob: 0.9999, count: 100 },
+  { lat: 13.02, lon: 77.56, density: 2400,  prob: 0.9999, count: 88  },
+  { lat: 12.86, lon: 77.65, density: 1800,  prob: 0.9999, count: 72  },
+  { lat: 13.04, lon: 77.60, density: 1200,  prob: 0.9998, count: 55  },
+];
+
+const HOURLY = [420,290,180,150,160,310,980,1840,2100,1720,1480,1560,
+                1380,1200,1100,1050,1180,1860,2230,1940,1560,1100,780,580];
+
+// ──────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────
+function riskFromProb(p) {
+  if (p >= 0.85) return "CRITICAL";
+  if (p >= 0.65) return "HIGH";
+  if (p >= 0.40) return "MEDIUM";
+  return "LOW";
+}
+function riskColor(r) {
+  return { CRITICAL:"#FF3D3D", HIGH:"#FF8C00", MEDIUM:"#F5C400", LOW:"#1DB87A" }[r] || "#6B7685";
+}
+function riskBg(r) {
+  return { CRITICAL:"#FFF0F0", HIGH:"#FFF5E6", MEDIUM:"#FFFBE6", LOW:"#EDFAF4" }[r] || "#F5F6F8";
+}
+
+// ──────────────────────────────────────────────────
+// MAP
+// ──────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false }).setView([12.97, 77.59], 12);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO',
+  maxZoom: 19
+}).addTo(map);
+
+let markers = [];
+
+function buildCircle(h) {
+  const risk   = riskFromProb(h.prob);
+  const color  = riskColor(risk);
+  const radius = Math.max(200, Math.sqrt(h.count) * 60);
+
+  const circle = L.circle([h.lat, h.lon], {
+    radius, color, fillColor: color,
+    fillOpacity: 0.25, weight: 1.5, opacity: 0.8
+  });
+
+  const shortJunction = METADATA.top_junctions.find(j => {
+    const jLat = parseFloat(j.split("-")[0]) || null;
+    return false;
+  });
+
+  circle.bindPopup(`
+    <div class="popup-inner">
+      <div class="popup-title" style="color:${color}">${risk} RISK ZONE</div>
+      <div class="popup-row"><span>Coordinates</span><span style="font-family:monospace">${h.lat.toFixed(3)}, ${h.lon.toFixed(3)}</span></div>
+      <div class="popup-row"><span>Cell density</span><span>${h.density.toLocaleString()} violations</span></div>
+      <div class="popup-row"><span>Test records</span><span>${h.count}</span></div>
+      <div class="popup-prob" style="color:${color}">${(h.prob * 100).toFixed(2)}% congestion probability</div>
+    </div>
+  `);
+  return { circle, risk };
+}
+
+function renderMap(filter) {
+  markers.forEach(m => map.removeLayer(m.circle));
+  markers = [];
+  HOTSPOTS.forEach(h => {
+    const m = buildCircle(h);
+    if (filter === 'all' || m.risk === filter) {
+      m.circle.addTo(map);
+    }
+    markers.push(m);
+  });
+}
+
+function filterMap(type, btn) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  renderMap(type);
+}
+
+renderMap('all');
+
+// ──────────────────────────────────────────────────
+// JUNCTION LIST
+// ──────────────────────────────────────────────────
+const maxCount = Math.max(...METADATA.junction_counts);
+const jList = document.getElementById('junction-list');
+METADATA.top_junctions.forEach((j, i) => {
+  const pct = Math.round(METADATA.junction_counts[i] / maxCount * 100);
+  const clean = j.replace(/^BTP\d+ - /, '');
+  const el = document.createElement('div');
+  el.className = 'junction-item';
+  el.innerHTML = `
+    <span class="junction-rank">${String(i+1).padStart(2,'0')}</span>
+    <div style="flex:1">
+      <div class="junction-name">${clean}</div>
+      <div class="junction-bar-wrap">
+        <div class="junction-bar" style="width:${pct}%"></div>
+      </div>
+    </div>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--ink-3)">${(METADATA.junction_counts[i]/1000).toFixed(1)}k</span>
+  `;
+  jList.appendChild(el);
+});
+
+// ──────────────────────────────────────────────────
+// MODEL METRICS
+// ──────────────────────────────────────────────────
+const metricsList = document.getElementById('metrics-list');
+Object.entries(METADATA.model_metrics).forEach(([name, m]) => {
+  const isLGBM = name === "LightGBM";
+  const pct = Math.round(m.f1 * 100);
+  const el = document.createElement('div');
+  el.className = 'metric-row';
+  el.innerHTML = `
+    <div class="metric-name">${name}${isLGBM ? '&nbsp;<span class="best-tag">BEST</span>' : ''}</div>
+    <div class="metric-bar-wrap">
+      <div class="metric-bar" style="width:${pct}%;background:${m.color}"></div>
+    </div>
+    <div class="metric-val-label">${m.f1.toFixed(4)}</div>
+  `;
+  metricsList.appendChild(el);
+});
+
+// ──────────────────────────────────────────────────
+// HOURLY CHART
+// ──────────────────────────────────────────────────
+const ctx = document.getElementById('hourly-chart').getContext('2d');
+new Chart(ctx, {
+  type: 'bar',
+  data: {
+    labels: Array.from({length:24}, (_,i) => i % 6 === 0 ? `${i}:00` : ''),
+    datasets: [{
+      data: HOURLY,
+      backgroundColor: HOURLY.map(v =>
+        v >= 1800 ? 'rgba(255,61,61,0.75)' :
+        v >= 1200 ? 'rgba(255,140,0,0.65)' :
+        'rgba(26,86,255,0.35)'
+      ),
+      borderRadius: 2,
+      borderSkipped: false,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false }, tooltip: {
+      callbacks: {
+        title: (items) => `Hour ${items[0].dataIndex}:00`,
+        label: (item) => `${item.raw.toLocaleString()} violations`
+      }
+    }},
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 9 }, color: '#6B7685' } },
+      y: { grid: { color: '#E2E5EA' }, ticks: { font: { size: 9 }, color: '#6B7685' } }
+    }
+  }
+});
+
+// ──────────────────────────────────────────────────
+// BACKEND CONFIG
+// Change this URL if your API runs on a different
+// host or port. No other change needed in this file.
+// ──────────────────────────────────────────────────
+const API_BASE = "http://localhost:8000";
+
+// ── API status indicator ───────────────────────────
+async function checkApiStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+    const data = await res.json();
+    if (data.status === "ok") {
+      document.getElementById('api-status').textContent = "● API connected";
+      document.getElementById('api-status').style.color = "#1DB87A";
+    }
+  } catch {
+    document.getElementById('api-status').textContent = "● API offline";
+    document.getElementById('api-status').style.color = "#FF3D3D";
+  }
+}
+checkApiStatus();
+setInterval(checkApiStatus, 15000); // re-check every 15 s
+
+// ── Load live hotspots from backend ───────────────
+async function loadHotspots() {
+  try {
+    const res  = await fetch(`${API_BASE}/hotspots?limit=50`);
+    const data = await res.json();
+    // data.hotspots = [{lat_grid, lon_grid, violation_density, avg_congestion_prob, record_count}, …]
+    const live = data.hotspots.map(h => ({
+      lat:     h.lat_grid,
+      lon:     h.lon_grid,
+      density: h.violation_density,
+      prob:    h.avg_congestion_prob,
+      count:   h.record_count,
+    }));
+    // Replace static HOTSPOTS array and re-render map
+    HOTSPOTS.length = 0;
+    live.forEach(h => HOTSPOTS.push(h));
+    renderMap('all');
+  } catch {
+    // Backend offline — HOTSPOTS already has static fallback data, map stays visible
+    console.warn("Could not load live hotspots — using static fallback data.");
+  }
+}
+loadHotspots();
+
+// ── showResult: updates UI from a prediction result ──
+function showResult(result, lat, lon, vehicle) {
+  const prob   = result.congestion_probability;
+  const risk   = result.risk_level;
+  const impact = result.high_congestion_impact;
+
+  const card = document.getElementById('result-card');
+  card.style.display = 'block';
+
+  document.getElementById('result-header').style.background = riskBg(risk);
+  document.getElementById('result-risk-label').textContent  = risk + ' RISK';
+  document.getElementById('result-risk-label').style.color  = riskColor(risk);
+  document.getElementById('result-prob-label').textContent  =
+    `${(prob * 100).toFixed(1)}% congestion probability`;
+
+  const badge = document.getElementById('result-badge');
+  badge.textContent       = impact ? '⚡ HIGH IMPACT' : '✓ LOW IMPACT';
+  badge.style.background  = impact ? riskColor(risk) : '#1DB87A';
+  badge.style.color       = '#fff';
+
+  const factors = result.key_risk_factors || [];
+  document.getElementById('result-factors-list').innerHTML = factors.length
+    ? factors.map(f => `<span class="factor-tag">⚠ ${f}</span>`).join('')
+    : `<span style="font-size:11px;color:var(--ink-3)">No significant risk factors detected.</span>`;
+
+  // Drop a pin on the map
+  map.setView([lat, lon], 14);
+  L.circleMarker([lat, lon], {
+    radius: 10, weight: 2,
+    color: riskColor(risk), fillColor: riskColor(risk), fillOpacity: 0.9,
+  }).addTo(map)
+    .bindPopup(`
+      <div class="popup-inner">
+        <div class="popup-title" style="color:${riskColor(risk)}">PREDICTION RESULT</div>
+        <div class="popup-row"><span>Risk</span>
+          <span style="font-weight:700;color:${riskColor(risk)}">${risk}</span></div>
+        <div class="popup-row"><span>Vehicle</span><span>${vehicle}</span></div>
+        <div class="popup-prob" style="color:${riskColor(risk)}">${(prob*100).toFixed(1)}% probability</div>
+      </div>`)
+    .openPopup();
+}
+
+// ── Main predict handler — calls the real API ──────
+async function runPredict() {
+  const lat     = parseFloat(document.getElementById('f-lat').value);
+  const lon     = parseFloat(document.getElementById('f-lon').value);
+  const dtStr   = document.getElementById('f-dt').value;
+  const vtype   = document.getElementById('f-vtype').value;
+  const vehicle = document.getElementById('f-vehicle').value;
+  const station = document.getElementById('f-station').value;
+  const density = parseInt(document.getElementById('f-density').value, 10);
+
+  const btn     = document.querySelector('.predict-btn');
+  const spinner = document.getElementById('btn-spinner');
+  const btnText = document.getElementById('btn-text');
+
+  btn.disabled          = true;
+  btnText.textContent   = 'Analysing…';
+  spinner.style.display = 'block';
+
+  try {
+    // ── POST to FastAPI /predict ───────────────────
+    const response = await fetch(`${API_BASE}/predict`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        latitude:             lat,
+        longitude:            lon,
+        // Convert "2024-03-15T08:30" → "2024-03-15T08:30:00+00:00"
+        created_datetime:     new Date(dtStr).toISOString(),
+        violation_type:       vtype,
+        vehicle_type:         vehicle,
+        police_station:       station,
+        junction_name:        "",
+        grid_violation_count: density,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+
+    // result = { high_congestion_impact, congestion_probability,
+    //            risk_level, key_risk_factors }
+    const result = await response.json();
+    showResult(result, lat, lon, vehicle);
+
+  } catch (err) {
+    // ── Friendly error banner inside result card ───
+    const card = document.getElementById('result-card');
+    card.style.display = 'block';
+    document.getElementById('result-header').style.background = '#FFF0F0';
+    document.getElementById('result-risk-label').textContent  = 'API ERROR';
+    document.getElementById('result-risk-label').style.color  = '#FF3D3D';
+    document.getElementById('result-prob-label').textContent  = err.message;
+    document.getElementById('result-badge').textContent       = '✕ FAILED';
+    document.getElementById('result-badge').style.background  = '#FF3D3D';
+    document.getElementById('result-badge').style.color       = '#fff';
+    document.getElementById('result-factors-list').innerHTML  =
+      `<span style="font-size:11px;color:#FF3D3D">
+        Make sure the backend is running:<br>
+        <code>uvicorn api:app --port 8000</code>
+      </span>`;
+  } finally {
+    btn.disabled          = false;
+    btnText.textContent   = 'Run prediction';
+    spinner.style.display = 'none';
+  }
+}
+</script>
+</body>
+</html>
