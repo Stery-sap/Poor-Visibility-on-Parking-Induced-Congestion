@@ -1,0 +1,13 @@
+# Trained model artifacts — generate locally by running the pipeline
+model_artifacts/best_model.pkl
+model_artifacts/scaler.pkl
+model_artifacts/le_vehicle.pkl
+model_artifacts/le_station.pkl
+model_artifacts/lightgbm.pkl
+model_artifacts/xgboost.pkl
+# Raw data
+*.csv
+!model_artifacts/hotspot_report.csv
+!model_artifacts/feature_importance.csv
+
+api.py
