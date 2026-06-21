@@ -7,7 +7,7 @@ model_artifacts/lightgbm.pkl
 model_artifacts/xgboost.pkl
 # Raw data
 *.csv
-!model_artifacts/hotspot_report.csv
-!model_artifacts/feature_importance.csv
+model_artifacts/hotspot_report.csv
+model_artifacts/feature_importance.csv
 
 api.py
